@@ -9,6 +9,10 @@
     backup: true
     regexp: 'Restart_Program_01'
     replace: 'Start_Program_01'
+  # Throttle and retry loop was added to combat NFS write lockups on Azure NFS
+  throttle: 1
+  retries: 30
+  delay: 10
 
 - name: "SAP HA Pacemaker - (ERS profile) Prevent automatic restart"
   ansible.builtin.replace:
@@ -16,6 +20,10 @@
     backup: true
     regexp: 'Restart_Program_00'
     replace: 'Start_Program_00'
+  # Throttle and retry loop was added to combat NFS write lockups on Azure NFS
+  throttle: 1
+  retries: 30
+  delay: 10
 
 # Comment out lines in /usr/sap/sapservices, which
 # - contain the target instance profile names
@@ -128,6 +136,10 @@
       loop_control:
         loop_var: nwas_profile_item
         label: "{{ nwas_profile_item.0 }} -> {{ nwas_profile_item.1 }}"
+    # Throttle and retry loop was added to combat NFS write lockups on Azure NFS
+      throttle: 1
+      retries: 30
+      delay: 10
 
     # Sleep added to resolve issue with WaitforStarted finishing before resources are available.
     - name: "SAP HA Pacemaker - (SAP HA Interface) Wait for ASCS to be up and running"
@@ -148,7 +160,8 @@
       changed_when: false
       failed_when: false
 
-
+    # NOTE: RestartService can cause fencing lockup and hang forever,
+    # it might be good to remove them in future and leave reload to "ASCS ERS restart" block.
     - name: "SAP HA Pacemaker - (SAP HA Interface) Restart the ASCS service"
       when:
         - __sap_ha_pacemaker_cluster_register_where_ascs.rc == 0
@@ -233,7 +246,7 @@
       block:
         - name: "SAP HA Pacemaker - (SAP HA Interface) Restart ASCS ERS resources"
           ansible.builtin.shell: |
-            {{ __sap_ha_pacemaker_cluster_command.resource_restart }} {{ __rsc_ascs }} {{ __rsc_ers }}
+            {{ __sap_ha_pacemaker_cluster_command.resource_restart }} {{ restart_item }}
           vars:
             __rsc_ascs: "{{ sap_ha_pacemaker_cluster_nwas_abap_ascs_sapstartsrv_resource_name
               if sap_ha_pacemaker_cluster_nwas_abap_ascs_ers_simple_mount
@@ -241,6 +254,11 @@
             __rsc_ers: "{{ sap_ha_pacemaker_cluster_nwas_abap_ers_sapstartsrv_resource_name
               if sap_ha_pacemaker_cluster_nwas_abap_ascs_ers_simple_mount
               else sap_ha_pacemaker_cluster_nwas_abap_ers_sapinstance_resource_name }}"
+          loop:
+            - "{{ __rsc_ascs }}"
+            - "{{ __rsc_ers }}"
+          loop_control:
+            loop_var: restart_item
           when:
             - __sap_ha_pacemaker_cluster_register_where_ascs.rc == 0
           changed_when: true
